@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Health Monitor Simulator</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
+        .card { border: 1px solid #ddd; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .alert { background: #fee2e2; color: #991b1b; padding: 10px; border-radius: 5px; font-weight: bold; }
+        .normal { background: #dcfce7; color: #166534; padding: 10px; border-radius: 5px; }
+        button { padding: 10px 15px; cursor: pointer; margin-right: 10px; }
+    </style>
+</head>
+<body>
+    <h2>Real-Time Health Monitor (Simulation)</h2>
+    
+    <div class="card">
+        <label>Select AI Model: </label>
+        <select id="modelSelect">
+            <option value="threshold">Static Thresholds (>120 or <50 BPM)</option>
+            <option value="zscore">Dynamic Z-Score Anomaly Detector</option>
+        </select>
+        <br><br>
+        <button id="startBtn" onclick="startSession()">Start Session</button>
+        <button id="stopBtn" onclick="endSession()" disabled>End Session & Wipe DB</button>
+    </div>
+
+    <div class="card" id="controls" style="display:none;">
+        <p><strong>Session ID:</strong> <span id="sessionDisplay"></span></p>
+        <button onclick="sendSimulatedData(75)">Send Normal (75 BPM)</button>
+        <button onclick="sendSimulatedData(145)">Simulate Spike (145 BPM)</button>
+        <button onclick="toggleAutoStream()" id="autoBtn">Start Auto-Stream</button>
+    </div>
+
+    <div id="statusBox"></div>
+
+    <script>
+        // REPLACE THIS WITH YOUR RENDER WEB SERVICE URL IN STEP 4
+        const BACKEND_WS_URL = "wss://://onrender.com"; 
+        
+        let ws = null;
+        let autoInterval = null;
+
+        function startSession() {
+            const sessionId = "sess_" + Math.random().toString(36).substring(2, 9);
+            const model = document.getElementById("modelSelect").value;
+            
+            ws = new WebSocket(`${BACKEND_WS_URL}/ws/${sessionId}/${model}`);
+            
+            ws.onopen = () => {
+                document.getElementById("sessionDisplay").innerText = sessionId;
+                document.getElementById("controls").style.display = "block";
+                document.getElementById("startBtn").disabled = true;
+                document.getElementById("stopBtn").disabled = false;
+                document.getElementById("statusBox").innerHTML = "<p>Connected to server.</p>";
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                const cssClass = data.is_anomaly ? "alert" : "normal";
+                document.getElementById("statusBox").innerHTML = 
+                    `<div class="${cssClass}">HR: ${data.heart_rate} BPM — ${data.alert_message}</div>`;
+            };
+
+            ws.onclose = () => {
+                resetUI();
+            };
+        }
+
+        function sendSimulatedData(hr) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ heart_rate: hr }));
+            }
+        }
+
+        function toggleAutoStream() {
+            if (autoInterval) {
+                clearInterval(autoInterval);
+                autoInterval = null;
+                document.getElementById("autoBtn").innerText = "Start Auto-Stream";
+            } else {
+                document.getElementById("autoBtn").innerText = "Stop Auto-Stream";
+                autoInterval = setInterval(() => {
+                    // Generate random HR between 65 and 85, with occasional spikes
+                    const hr = Math.random() > 0.85 ? 140 : Math.floor(Math.random() * 20) + 65;
+                    sendSimulatedData(hr);
+                }, 1000);
+            }
+        }
+
+        function endSession() {
+            if (ws) ws.close(); // Closing the WebSocket triggers the backend DB delete
+        }
+
+        function resetUI() {
+            clearInterval(autoInterval);
+            autoInterval = null;
+            document.getElementById("controls").style.display = "none";
+            document.getElementById("startBtn").disabled = false;
+            document.getElementById("stopBtn").disabled = true;
+            document.getElementById("statusBox").innerHTML = "<p>Session ended. Database records deleted.</p>";
+        }
+    </script>
+</body>
+</html>
