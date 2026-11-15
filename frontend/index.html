@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <title>Astronaut Telemetry & AI Health Monitor</title>
+    <script src="https://jsdelivr.net"></script>
     <style>
-        body { font-family: system-ui, sans-serif; max-width: 680px; margin: 40px auto; padding: 20px; background: #0f172a; color: #f8fafc; }
+        body { font-family: system-ui, sans-serif; max-width: 760px; margin: 40px auto; padding: 20px; background: #0f172a; color: #f8fafc; }
         .card { background: #1e293b; border: 1px solid #334155; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
         .alert { background: #7f1d1d; border: 1px solid #ef4444; color: #fecaca; padding: 14px; border-radius: 6px; font-weight: bold; }
         .normal { background: #14532d; border: 1px solid #22c55e; color: #bbf7d0; padding: 14px; border-radius: 6px; }
@@ -14,6 +15,7 @@
         .btn-primary { background: #2563eb; border-color: #3b82f6; }
         .btn-danger { background: #dc2626; border-color: #ef4444; }
         label { display: inline-block; width: 140px; font-weight: 600; }
+        .chart-container { position: relative; height: 280px; width: 100%; margin-top: 15px; }
     </style>
 </head>
 <body>
@@ -44,16 +46,20 @@
         <div id="simButtons"></div>
         <hr style="border-color: #334155; margin: 15px 0;">
         <button onclick="toggleAutoStream()" id="autoBtn">Start Auto-Stream (1s)</button>
+        
+        <div class="chart-container">
+            <canvas id="telemetryChart"></canvas>
+        </div>
     </div>
 
     <div id="statusBox"></div>
-
     <script>
-        // KEEP YOUR RENDER BACKEND URL HERE
         const BACKEND_WS_URL = "wss://health-monitor-api-fso9.onrender.com"; 
         
         let ws = null;
         let autoInterval = null;
+        let telemetryChart = null;
+        let timestamps = [];
 
         const SENSOR_CONFIG = {
             heart_rate: {
@@ -64,7 +70,10 @@
                 normalPayload: () => ({ bpm: Math.floor(Math.random() * 18) + 65 }),
                 anomalyPayload: () => ({ bpm: 148 }),
                 normalLabel: "Send Normal HR (~75 BPM)",
-                anomalyLabel: "Simulate Tachycardia (148 BPM)"
+                anomalyLabel: "Simulate Tachycardia (148 BPM)",
+                chartDatasets: [
+                    { label: "Heart Rate (BPM)", key: "bpm", borderColor: "#38bdf8", backgroundColor: "rgba(56, 189, 248, 0.2)", yAxisID: "y" }
+                ]
             },
             blood_sugar: {
                 models: [
@@ -74,30 +83,105 @@
                 normalPayload: () => ({ mg_dl: Math.floor(Math.random() * 25) + 90 }),
                 anomalyPayload: () => ({ mg_dl: 54 }),
                 normalLabel: "Send Normal Glucose (~100 mg/dL)",
-                anomalyLabel: "Simulate Hypoglycemia (54 mg/dL)"
+                anomalyLabel: "Simulate Hypoglycemia (54 mg/dL)",
+                chartDatasets: [
+                    { label: "Glucose (mg/dL)", key: "mg_dl", borderColor: "#a78bfa", backgroundColor: "rgba(167, 139, 250, 0.2)", yAxisID: "y" }
+                ]
             },
             brain_waves: {
                 models: [
                     { id: "cognitive_load", name: "Beta/Alpha Cognitive Load & Fatigue Classifier" },
                     { id: "isolation_forest", name: "Isolation Forest (3-Band EEG Outlier ML)" }
                 ],
-                normalPayload: () => ({ alpha_hz: 10.2, beta_hz: 15.0, theta_hz: 5.1 }),
+                normalPayload: () => ({ 
+                    alpha_hz: +(9 + Math.random() * 2).toFixed(1), 
+                    beta_hz: +(14 + Math.random() * 3).toFixed(1), 
+                    theta_hz: +(4.5 + Math.random() * 1.5).toFixed(1) 
+                }),
                 anomalyPayload: () => ({ alpha_hz: 6.0, beta_hz: 28.5, theta_hz: 4.0 }),
-                normalLabel: "Send Focused EEG (α:10, β:15, θ:5)",
-                anomalyLabel: "Simulate Cognitive Overload (β:28.5 Hz)"
+                normalLabel: "Send Focused EEG (~a:10, b:15, t:5)",
+                anomalyLabel: "Simulate Cognitive Overload (b:28.5 Hz)",
+                chartDatasets: [
+                    { label: "Alpha (Hz)", key: "alpha_hz", borderColor: "#4ade80", backgroundColor: "transparent", yAxisID: "y" },
+                    { label: "Beta (Hz)", key: "beta_hz", borderColor: "#f87171", backgroundColor: "transparent", yAxisID: "y" },
+                    { label: "Theta (Hz)", key: "theta_hz", borderColor: "#facc15", backgroundColor: "transparent", yAxisID: "y" }
+                ]
             },
             spo2_co2: {
                 models: [
                     { id: "hypoxia_env", name: "Combined Hypoxia & Cabin CO2 Rule Engine" },
                     { id: "isolation_forest", name: "Isolation Forest (Multivariate O2/CO2 ML)" }
                 ],
-                normalPayload: () => ({ spo2_pct: 98, cabin_co2_ppm: 850 }),
+                normalPayload: () => ({ spo2_pct: Math.floor(Math.random() * 3) + 97, cabin_co2_ppm: Math.floor(Math.random() * 200) + 750 }),
                 anomalyPayload: () => ({ spo2_pct: 88, cabin_co2_ppm: 5400 }),
-                normalLabel: "Send Nominal Cabin (98% O2, 850 ppm CO2)",
-                anomalyLabel: "Simulate Scrubber Failure (88% O2, 5400 ppm)"
+                normalLabel: "Send Nominal Cabin (~98% O2, ~850 ppm CO2)",
+                anomalyLabel: "Simulate Scrubber Failure (88% O2, 5400 ppm)",
+                chartDatasets: [
+                    { label: "Blood Oxygen (%)", key: "spo2_pct", borderColor: "#34d399", backgroundColor: "transparent", yAxisID: "y" },
+                    { label: "Cabin CO2 (ppm)", key: "cabin_co2_ppm", borderColor: "#fb923c", backgroundColor: "transparent", yAxisID: "y1" }
+                ]
             }
         };
 
+        function initChart(sensor) {
+            const ctx = document.getElementById("telemetryChart").getContext("2d");
+            if (telemetryChart) telemetryChart.destroy();
+            timestamps = [];
+
+            const cfg = SENSOR_CONFIG[sensor];
+            const datasets = cfg.chartDatasets.map(ds => ({
+                label: ds.label,
+                data: [],
+                borderColor: ds.borderColor,
+                backgroundColor: ds.backgroundColor,
+                yAxisID: ds.yAxisID,
+                borderWidth: 2,
+                tension: 0.3,
+                pointRadius: 4
+            }));
+
+            const scales = {
+                x: { ticks: { color: "#94a3b8" }, grid: { color: "#334155" } },
+                y: { ticks: { color: "#94a3b8" }, grid: { color: "#334155" }, position: "left" }
+            };
+            if (sensor === "spo2_co2") {
+                scales.y1 = { ticks: { color: "#fb923c" }, grid: { drawOnChartArea: false }, position: "right" };
+            }
+
+            telemetryChart = new Chart(ctx, {
+                type: "line",
+                data: { labels: [], datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    plugins: { legend: { labels: { color: "#f8fafc" } } },
+                    scales: scales
+                }
+            });
+        }
+
+        function updateChart(sensor, metrics) {
+            if (!telemetryChart) return;
+
+            const now = Date.now();
+            const timeLabel = new Date(now).toLocaleTimeString([], { hour12: false, minute: "2-digit", second: "2-digit" });
+            const cfg = SENSOR_CONFIG[sensor];
+
+            timestamps.push(now);
+            telemetryChart.data.labels.push(timeLabel);
+            cfg.chartDatasets.forEach((ds, index) => {
+                telemetryChart.data.datasets[index].data.push(metrics[ds.key]);
+            });
+
+            while (timestamps.length > 0 && (now - timestamps[0]) > 10000) {
+                timestamps.shift();
+                telemetryChart.data.labels.shift();
+                telemetryChart.data.datasets.forEach(dataset => dataset.data.shift());
+            }
+
+            telemetryChart.update();
+        }
         function updateModelOptions() {
             const sensor = document.getElementById("sensorSelect").value;
             const modelSelect = document.getElementById("modelSelect");
@@ -126,10 +210,12 @@
                 document.getElementById("modelSelect").disabled = true;
                 document.getElementById("stopBtn").disabled = false;
 
+                initChart(sensor);
+
                 const cfg = SENSOR_CONFIG[sensor];
                 document.getElementById("simButtons").innerHTML = `
-                    <button onclick='sendPayload(${JSON.stringify(cfg.normalPayload())})'>${cfg.normalLabel}</button>
-                    <button class="btn-danger" onclick='sendPayload(${JSON.stringify(cfg.anomalyPayload())})'>${cfg.anomalyLabel}</button>
+                    <button onclick="sendNormal()">${cfg.normalLabel}</button>
+                    <button class="btn-danger" onclick="sendAnomaly()">${cfg.anomalyLabel}</button>
                 `;
                 document.getElementById("statusBox").innerHTML = "<p>Connected. Ready to stream telemetry.</p>";
             };
@@ -139,9 +225,21 @@
                 const cssClass = data.is_anomaly ? "alert" : "normal";
                 document.getElementById("statusBox").innerHTML = 
                     `<div class="${cssClass}">${data.alert_message}<br><small>Raw Data: ${JSON.stringify(data.metrics)}</small></div>`;
+                
+                updateChart(data.sensor_type, data.metrics);
             };
 
             ws.onclose = () => resetUI();
+        }
+
+        function sendNormal() {
+            const sensor = document.getElementById("sensorSelect").value;
+            sendPayload(SENSOR_CONFIG[sensor].normalPayload());
+        }
+
+        function sendAnomaly() {
+            const sensor = document.getElementById("sensorSelect").value;
+            sendPayload(SENSOR_CONFIG[sensor].anomalyPayload());
         }
 
         function sendPayload(obj) {
@@ -161,7 +259,6 @@
             } else {
                 document.getElementById("autoBtn").innerText = "Stop Auto-Stream";
                 autoInterval = setInterval(() => {
-                    // 80% chance normal reading, 20% chance anomaly
                     const payload = Math.random() > 0.2 ? cfg.normalPayload() : cfg.anomalyPayload();
                     sendPayload(payload);
                 }, 1000);
@@ -175,6 +272,10 @@
         function resetUI() {
             clearInterval(autoInterval);
             autoInterval = null;
+            if (telemetryChart) {
+                telemetryChart.destroy();
+                telemetryChart = null;
+            }
             document.getElementById("controls").style.display = "none";
             document.getElementById("startBtn").disabled = false;
             document.getElementById("sensorSelect").disabled = false;
@@ -183,7 +284,6 @@
             document.getElementById("statusBox").innerHTML = "<p>Session ended. Telemetry wiped from database.</p>";
         }
 
-        // Initialize dropdown on page load
         updateModelOptions();
     </script>
 </body>
