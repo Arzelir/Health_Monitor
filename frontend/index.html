@@ -174,7 +174,7 @@
                 telemetryChart.data.datasets[index].data.push(metrics[ds.key]);
             });
 
-            while (timestamps.length > 0 && (now - timestamps[0]) > 10000) {
+            while (timestamps.length > 0 && (now - timestamps.at(0)) > 10000) {
                 timestamps.shift();
                 telemetryChart.data.labels.shift();
                 telemetryChart.data.datasets.forEach(dataset => dataset.data.shift());
@@ -182,6 +182,7 @@
 
             telemetryChart.update();
         }
+
         function updateModelOptions() {
             const sensor = document.getElementById("sensorSelect").value;
             const modelSelect = document.getElementById("modelSelect");
@@ -211,6 +212,7 @@
                 document.getElementById("stopBtn").disabled = false;
 
                 initChart(sensor);
+                telemetryChart.resize();
 
                 const cfg = SENSOR_CONFIG[sensor];
                 document.getElementById("simButtons").innerHTML = `
@@ -231,6 +233,7 @@
 
             ws.onclose = () => resetUI();
         }
+
 
         function sendNormal() {
             const sensor = document.getElementById("sensorSelect").value;
