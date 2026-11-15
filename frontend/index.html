@@ -2,94 +2,174 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Health Monitor Simulator</title>
+    <title>Astronaut Telemetry & AI Health Monitor</title>
     <style>
-        body { font-family: system-ui, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
-        .card { border: 1px solid #ddd; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-        .alert { background: #fee2e2; color: #991b1b; padding: 10px; border-radius: 5px; font-weight: bold; }
-        .normal { background: #dcfce7; color: #166534; padding: 10px; border-radius: 5px; }
-        button { padding: 10px 15px; cursor: pointer; margin-right: 10px; }
+        body { font-family: system-ui, sans-serif; max-width: 680px; margin: 40px auto; padding: 20px; background: #0f172a; color: #f8fafc; }
+        .card { background: #1e293b; border: 1px solid #334155; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+        .alert { background: #7f1d1d; border: 1px solid #ef4444; color: #fecaca; padding: 14px; border-radius: 6px; font-weight: bold; }
+        .normal { background: #14532d; border: 1px solid #22c55e; color: #bbf7d0; padding: 14px; border-radius: 6px; }
+        select, button { padding: 10px 14px; border-radius: 6px; border: 1px solid #475569; background: #334155; color: white; cursor: pointer; margin-right: 8px; margin-top: 8px; }
+        button:hover:not(:disabled) { background: #475569; }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-primary { background: #2563eb; border-color: #3b82f6; }
+        .btn-danger { background: #dc2626; border-color: #ef4444; }
+        label { display: inline-block; width: 140px; font-weight: 600; }
     </style>
 </head>
 <body>
-    <h2>Real-Time Health Monitor (Simulation)</h2>
+    <h2>🛰️ Astronaut Biometric Telemetry Console</h2>
     
     <div class="card">
-        <label>Select AI Model: </label>
-        <select id="modelSelect">
-            <option value="threshold">Static Thresholds (>120 or <50 BPM)</option>
-            <option value="zscore">Dynamic Z-Score Anomaly Detector</option>
-        </select>
-        <br><br>
-        <button id="startBtn" onclick="startSession()">Start Session</button>
-        <button id="stopBtn" onclick="endSession()" disabled>End Session & Wipe DB</button>
+        <div>
+            <label>Select Sensor:</label>
+            <select id="sensorSelect" onchange="updateModelOptions()">
+                <option value="heart_rate">Heart Rate (ECG)</option>
+                <option value="blood_sugar">Blood Sugar (CGM)</option>
+                <option value="brain_waves">Brain Waves (EEG)</option>
+                <option value="spo2_co2">Blood Oxygen (SpO2) & Cabin CO2</option>
+            </select>
+        </div>
+        <div style="margin-top: 10px;">
+            <label>Select AI Model:</label>
+            <select id="modelSelect"></select>
+        </div>
+        <div style="margin-top: 15px;">
+            <button id="startBtn" class="btn-primary" onclick="startSession()">Start Telemetry Session</button>
+            <button id="stopBtn" class="btn-danger" onclick="endSession()" disabled>End Session & Wipe DB</button>
+        </div>
     </div>
 
     <div class="card" id="controls" style="display:none;">
-        <p><strong>Session ID:</strong> <span id="sessionDisplay"></span></p>
-        <button onclick="sendSimulatedData(75)">Send Normal (75 BPM)</button>
-        <button onclick="sendSimulatedData(145)">Simulate Spike (145 BPM)</button>
-        <button onclick="toggleAutoStream()" id="autoBtn">Start Auto-Stream</button>
+        <p><strong>Active Session:</strong> <span id="sessionDisplay"></span></p>
+        <div id="simButtons"></div>
+        <hr style="border-color: #334155; margin: 15px 0;">
+        <button onclick="toggleAutoStream()" id="autoBtn">Start Auto-Stream (1s)</button>
     </div>
 
     <div id="statusBox"></div>
 
     <script>
-        // REPLACE THIS WITH YOUR RENDER WEB SERVICE URL IN STEP 4
-        const BACKEND_WS_URL = "wss://health-monitor-api-fso9.onrender.com"; 
+        // KEEP YOUR RENDER BACKEND URL HERE
+        const BACKEND_WS_URL = "wss://://onrender.com"; 
         
         let ws = null;
         let autoInterval = null;
 
+        const SENSOR_CONFIG = {
+            heart_rate: {
+                models: [
+                    { id: "threshold", name: "Static Thresholds (>120 or <50 BPM)" },
+                    { id: "zscore", name: "Dynamic Z-Score Anomaly Detector" }
+                ],
+                normalPayload: () => ({ bpm: Math.floor(Math.random() * 18) + 65 }),
+                anomalyPayload: () => ({ bpm: 148 }),
+                normalLabel: "Send Normal HR (~75 BPM)",
+                anomalyLabel: "Simulate Tachycardia (148 BPM)"
+            },
+            blood_sugar: {
+                models: [
+                    { id: "threshold", name: "Clinical Bounds (<70 or >180 mg/dL)" },
+                    { id: "ema_drift", name: "EMA Rate-of-Change Drift Detector" }
+                ],
+                normalPayload: () => ({ mg_dl: Math.floor(Math.random() * 25) + 90 }),
+                anomalyPayload: () => ({ mg_dl: 54 }),
+                normalLabel: "Send Normal Glucose (~100 mg/dL)",
+                anomalyLabel: "Simulate Hypoglycemia (54 mg/dL)"
+            },
+            brain_waves: {
+                models: [
+                    { id: "cognitive_load", name: "Beta/Alpha Cognitive Load & Fatigue Classifier" },
+                    { id: "isolation_forest", name: "Isolation Forest (3-Band EEG Outlier ML)" }
+                ],
+                normalPayload: () => ({ alpha_hz: 10.2, beta_hz: 15.0, theta_hz: 5.1 }),
+                anomalyPayload: () => ({ alpha_hz: 6.0, beta_hz: 28.5, theta_hz: 4.0 }),
+                normalLabel: "Send Focused EEG (α:10, β:15, θ:5)",
+                anomalyLabel: "Simulate Cognitive Overload (β:28.5 Hz)"
+            },
+            spo2_co2: {
+                models: [
+                    { id: "hypoxia_env", name: "Combined Hypoxia & Cabin CO2 Rule Engine" },
+                    { id: "isolation_forest", name: "Isolation Forest (Multivariate O2/CO2 ML)" }
+                ],
+                normalPayload: () => ({ spo2_pct: 98, cabin_co2_ppm: 850 }),
+                anomalyPayload: () => ({ spo2_pct: 88, cabin_co2_ppm: 5400 }),
+                normalLabel: "Send Nominal Cabin (98% O2, 850 ppm CO2)",
+                anomalyLabel: "Simulate Scrubber Failure (88% O2, 5400 ppm)"
+            }
+        };
+
+        function updateModelOptions() {
+            const sensor = document.getElementById("sensorSelect").value;
+            const modelSelect = document.getElementById("modelSelect");
+            modelSelect.innerHTML = "";
+            SENSOR_CONFIG[sensor].models.forEach(m => {
+                const opt = document.createElement("option");
+                opt.value = m.id;
+                opt.innerText = m.name;
+                modelSelect.appendChild(opt);
+            });
+        }
+
         function startSession() {
-            const sessionId = "sess_" + Math.random().toString(36).substring(2, 9);
+            const sessionId = "astro_" + Math.random().toString(36).substring(2, 8);
+            const sensor = document.getElementById("sensorSelect").value;
             const model = document.getElementById("modelSelect").value;
             
-            ws = new WebSocket(`${BACKEND_WS_URL}/ws/${sessionId}/${model}`);
+            document.getElementById("statusBox").innerHTML = "<p>Connecting to spacecraft telemetry server...</p>";
+            ws = new WebSocket(`${BACKEND_WS_URL}/ws/${sessionId}/${sensor}/${model}`);
             
             ws.onopen = () => {
-                document.getElementById("sessionDisplay").innerText = sessionId;
+                document.getElementById("sessionDisplay").innerText = `${sessionId} [${sensor.toUpperCase()}]`;
                 document.getElementById("controls").style.display = "block";
                 document.getElementById("startBtn").disabled = true;
+                document.getElementById("sensorSelect").disabled = true;
+                document.getElementById("modelSelect").disabled = true;
                 document.getElementById("stopBtn").disabled = false;
-                document.getElementById("statusBox").innerHTML = "<p>Connected to server.</p>";
+
+                const cfg = SENSOR_CONFIG[sensor];
+                document.getElementById("simButtons").innerHTML = `
+                    <button onclick='sendPayload(${JSON.stringify(cfg.normalPayload())})'>${cfg.normalLabel}</button>
+                    <button class="btn-danger" onclick='sendPayload(${JSON.stringify(cfg.anomalyPayload())})'>${cfg.anomalyLabel}</button>
+                `;
+                document.getElementById("statusBox").innerHTML = "<p>Connected. Ready to stream telemetry.</p>";
             };
 
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
                 const cssClass = data.is_anomaly ? "alert" : "normal";
                 document.getElementById("statusBox").innerHTML = 
-                    `<div class="${cssClass}">HR: ${data.heart_rate} BPM — ${data.alert_message}</div>`;
+                    `<div class="${cssClass}">${data.alert_message}<br><small>Raw Data: ${JSON.stringify(data.metrics)}</small></div>`;
             };
 
-            ws.onclose = () => {
-                resetUI();
-            };
+            ws.onclose = () => resetUI();
         }
 
-        function sendSimulatedData(hr) {
+        function sendPayload(obj) {
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ heart_rate: hr }));
+                ws.send(JSON.stringify(obj));
             }
         }
 
         function toggleAutoStream() {
+            const sensor = document.getElementById("sensorSelect").value;
+            const cfg = SENSOR_CONFIG[sensor];
+
             if (autoInterval) {
                 clearInterval(autoInterval);
                 autoInterval = null;
-                document.getElementById("autoBtn").innerText = "Start Auto-Stream";
+                document.getElementById("autoBtn").innerText = "Start Auto-Stream (1s)";
             } else {
                 document.getElementById("autoBtn").innerText = "Stop Auto-Stream";
                 autoInterval = setInterval(() => {
-                    // Generate random HR between 65 and 85, with occasional spikes
-                    const hr = Math.random() > 0.85 ? 140 : Math.floor(Math.random() * 20) + 65;
-                    sendSimulatedData(hr);
+                    // 80% chance normal reading, 20% chance anomaly
+                    const payload = Math.random() > 0.2 ? cfg.normalPayload() : cfg.anomalyPayload();
+                    sendPayload(payload);
                 }, 1000);
             }
         }
 
         function endSession() {
-            if (ws) ws.close(); // Closing the WebSocket triggers the backend DB delete
+            if (ws) ws.close();
         }
 
         function resetUI() {
@@ -97,9 +177,14 @@
             autoInterval = null;
             document.getElementById("controls").style.display = "none";
             document.getElementById("startBtn").disabled = false;
+            document.getElementById("sensorSelect").disabled = false;
+            document.getElementById("modelSelect").disabled = false;
             document.getElementById("stopBtn").disabled = true;
-            document.getElementById("statusBox").innerHTML = "<p>Session ended. Database records deleted.</p>";
+            document.getElementById("statusBox").innerHTML = "<p>Session ended. Telemetry wiped from database.</p>";
         }
+
+        // Initialize dropdown on page load
+        updateModelOptions();
     </script>
 </body>
 </html>
