@@ -39,7 +39,6 @@ def analyze_telemetry(sensor_type: str, model_type: str, history: list, metrics:
             if glucose < 70: return True, f"Hypoglycemia Alert ({glucose} mg/dL < 70)"
             if glucose > 180: return True, f"Hyperglycemia Alert ({glucose} mg/dL > 180)"
         elif model_type == "ema_drift" and len(history) >= 4:
-            # Exponential Moving Average drift check for rapid drops/spikes
             recent = [h["mg_dl"] for h in history[-4:]]
             rate_of_change = (glucose - recent[0]) / len(recent)
             if rate_of_change < -8:
@@ -50,12 +49,11 @@ def analyze_telemetry(sensor_type: str, model_type: str, history: list, metrics:
 
     # --- 3. BRAIN WAVES (EEG) ---
     elif sensor_type == "brain_waves":
-        alpha = metrics["alpha_hz"] # Relaxed/focused awareness
-        beta = metrics["beta_hz"]   # Active stress/high workload
-        theta = metrics["theta_hz"] # Drowsiness/micro-sleep
+        alpha = metrics["alpha_hz"]
+        beta = metrics["beta_hz"]
+        theta = metrics["theta_hz"]
         
         if model_type == "cognitive_load":
-            # High Beta relative to Alpha indicates extreme stress/overload
             ratio = beta / max(alpha, 0.1)
             if ratio > 2.5:
                 return True, f"Cognitive Overload Alert (Beta/Alpha Ratio: {ratio:.2f})"
@@ -64,8 +62,8 @@ def analyze_telemetry(sensor_type: str, model_type: str, history: list, metrics:
         elif model_type == "isolation_forest" and len(history) >= 8:
             X = np.array([[h["alpha_hz"], h["beta_hz"], h["theta_hz"]] for h in history])
             clf = IsolationForest(contamination=0.15, random_state=42).fit(X)
-            pred = clf.predict([[alpha, beta, theta]])[0]
-            if pred == -1:
+            pred = clf.predict([[alpha, beta, theta]])
+            if pred[0] == -1:
                 return True, f"Abnormal EEG Pattern (Isolation Forest Outlier)"
         return False, f"Nominal Brain Activity (α:{alpha} β:{beta} θ:{theta} Hz)"
 
@@ -84,31 +82,44 @@ def analyze_telemetry(sensor_type: str, model_type: str, history: list, metrics:
         elif model_type == "isolation_forest" and len(history) >= 8:
             X = np.array([[h["spo2_pct"], h["cabin_co2_ppm"]] for h in history])
             clf = IsolationForest(contamination=0.15, random_state=42).fit(X)
-            pred = clf.predict([[spo2, co2]])[0]
-            if pred == -1:
+            pred = clf.predict([[spo2, co2]])
+            if pred[0] == -1:
                 return True, f"Multivariate SpO2/CO2 Anomaly Detected"
         return False, f"Nominal O2/CO2 (SpO2: {spo2}%, CO2: {co2} ppm)"
 
     return False, "Normal"
 
-@app.websocket("/ws/{session_id}/{sensor_type}/{model_type}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str, sensor_type: str, model_type: str):
+@app.websocket("/ws/{session_id}")
+async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
-    history = []
+    
+    # Separate sliding history window for each sensor on this single socket
+    histories = {
+        "heart_rate": [],
+        "blood_sugar": [],
+        "brain_waves": [],
+        "spo2_co2": []
+    }
     
     http_url = TURSO_URL.replace("libsql://", "https://")
     client = libsql_client.create_client(url=http_url, auth_token=TURSO_TOKEN)
 
     try:
         while True:
-            data = await websocket.receive_text()
-            metrics = json.loads(data)
+            raw_text = await websocket.receive_text()
+            packet = json.loads(raw_text)
+            
+            sensor_type = packet["sensor_type"]
+            model_type = packet["model_type"]
+            metrics = packet["metrics"]
 
-            # 1. Run AI Analysis
-            is_anomaly, message = analyze_telemetry(sensor_type, model_type, history, metrics)
-            history.append(metrics)
-            if len(history) > 25:
-                history.pop(0)
+            sensor_history = histories.setdefault(sensor_type, [])
+
+            # 1. Run AI Analysis for this specific sensor
+            is_anomaly, message = analyze_telemetry(sensor_type, model_type, sensor_history, metrics)
+            sensor_history.append(metrics)
+            if len(sensor_history) > 25:
+                sensor_history.pop(0)
 
             # 2. Save to Turso
             await client.execute(
@@ -116,7 +127,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, sensor_type:
                 [session_id, sensor_type, json.dumps(metrics), is_anomaly]
             )
 
-            # 3. Send response back to frontend
+            # 3. Send response back to frontend tagged with sensor_type
             await websocket.send_json({
                 "sensor_type": sensor_type,
                 "metrics": metrics,
@@ -126,6 +137,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, sensor_type:
 
     except WebSocketDisconnect:
         await client.execute("DELETE FROM vitals WHERE session_id = ?", [session_id])
-        print(f"Wiped session {session_id}")
+        print(f"Wiped multi-sensor session {session_id}")
     finally:
         await client.close()

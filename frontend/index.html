@@ -1,216 +1,173 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
-    <title>Astronaut Telemetry & AI Health Monitor</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1"></script>
+    <title>Astronaut Multi-Sensor Telemetry Console</title>
+    <script src="https://jsdelivr.net"></script>
     <style>
-        body {
-            font-family: system-ui, sans-serif;
-            max-width: 760px;
-            margin: 40px auto;
-            padding: 20px;
-            background: #0f172a;
-            color: #f8fafc;
-        }
-
-        .card {
-            background: #1e293b;
-            border: 1px solid #334155;
-            padding: 20px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-        }
-
-        .alert {
-            background: #7f1d1d;
-            border: 1px solid #ef4444;
-            color: #fecaca;
-            padding: 14px;
-            border-radius: 6px;
-            font-weight: bold;
-        }
-
-        .normal {
-            background: #14532d;
-            border: 1px solid #22c55e;
-            color: #bbf7d0;
-            padding: 14px;
-            border-radius: 6px;
-        }
-
-        select,
-        button {
-            padding: 10px 14px;
-            border-radius: 6px;
-            border: 1px solid #475569;
-            background: #334155;
-            color: white;
-            cursor: pointer;
-            margin-right: 8px;
-            margin-top: 8px;
-        }
-
-        button:hover:not(:disabled) {
-            background: #475569;
-        }
-
-        button:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-        }
-
-        .btn-primary {
-            background: #2563eb;
-            border-color: #3b82f6;
-        }
-
-        .btn-danger {
-            background: #dc2626;
-            border-color: #ef4444;
-        }
-
-        label {
-            display: inline-block;
-            width: 140px;
-            font-weight: 600;
-        }
-
-        .chart-container {
-            position: relative;
-            height: 280px;
-            width: 100%;
-            margin-top: 15px;
-        }
+        body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 30px auto; padding: 20px; background: #0f172a; color: #f8fafc; }
+        .card { background: #1e293b; border: 1px solid #334155; padding: 18px; border-radius: 10px; margin-bottom: 20px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 20px; }
+        .alert { background: #7f1d1d; border: 1px solid #ef4444; color: #fecaca; padding: 10px; border-radius: 6px; font-weight: bold; margin-top: 10px; font-size: 0.9rem; }
+        .normal { background: #14532d; border: 1px solid #22c55e; color: #bbf7d0; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 0.9rem; }
+        select, button { padding: 8px 12px; border-radius: 6px; border: 1px solid #475569; background: #334155; color: white; cursor: pointer; margin-right: 6px; margin-top: 6px; }
+        button:hover:not(:disabled) { background: #475569; }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-primary { background: #2563eb; border-color: #3b82f6; }
+        .btn-danger { background: #dc2626; border-color: #ef4444; }
+        .btn-active { background: #059669; border-color: #10b981; }
+        .chart-container { position: relative; height: 210px; width: 100%; margin-top: 12px; }
+        .sensor-toggle { display: inline-flex; align-items: center; margin-right: 18px; font-weight: 600; cursor: pointer; }
+        .sensor-toggle input { margin-right: 6px; transform: scale(1.2); }
     </style>
 </head>
-
 <body>
-    <h2>🛰️ Astronaut Biometric Telemetry Console</h2>
+    <h2>🛰️ Astronaut Multi-Sensor Mission Control</h2>
 
     <div class="card">
         <div>
-            <label>Select Sensor:</label>
-            <select id="sensorSelect" onchange="updateModelOptions()">
-                <option value="heart_rate">Heart Rate (ECG)</option>
-                <option value="blood_sugar">Blood Sugar (CGM)</option>
-                <option value="brain_waves">Brain Waves (EEG)</option>
-                <option value="spo2_co2">Blood Oxygen (SpO2) & Cabin CO2</option>
-            </select>
-        </div>
-        <div style="margin-top: 10px;">
-            <label>Select AI Model:</label>
-            <select id="modelSelect"></select>
-        </div>
-        <div style="margin-top: 15px;">
-            <button id="startBtn" class="btn-primary" onclick="startSession()">Start Telemetry Session</button>
+            <button id="startBtn" class="btn-primary" onclick="startSession()">Open WebSocket Session</button>
             <button id="stopBtn" class="btn-danger" onclick="endSession()" disabled>End Session & Wipe DB</button>
+            <span id="sessionStatus" style="margin-left: 15px; color: #94a3b8;">Disconnected</span>
+        </div>
+        <div id="sensorBar" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #334155; display: none;">
+            <span style="margin-right: 12px; color: #cbd5e1;">Active Simulators:</span>
+            <label class="sensor-toggle"><input type="checkbox" checked onchange="toggleSensorPanel('heart_rate', this.checked)"> Heart Rate</label>
+            <label class="sensor-toggle"><input type="checkbox" checked onchange="toggleSensorPanel('blood_sugar', this.checked)"> Blood Sugar</label>
+            <label class="sensor-toggle"><input type="checkbox" onchange="toggleSensorPanel('brain_waves', this.checked)"> Brain Waves</label>
+            <label class="sensor-toggle"><input type="checkbox" onchange="toggleSensorPanel('spo2_co2', this.checked)"> SpO2 & Cabin CO2</label>
         </div>
     </div>
 
-    <div class="card" id="controls" style="display:none;">
-        <p><strong>Active Session:</strong> <span id="sessionDisplay"></span></p>
-        <div id="simButtons"></div>
-        <hr style="border-color: #334155; margin: 15px 0;">
-        <button onclick="toggleAutoStream()" id="autoBtn">Start Auto-Stream (1s)</button>
-
-        <div class="chart-container">
-            <canvas id="telemetryChart"></canvas>
-        </div>
-    </div>
-
-    <div id="statusBox"></div>
+    <div id="dashboardGrid" class="grid" style="display: none;"></div>
     <script>
-        const BACKEND_WS_URL = "wss://health-monitor-api-fso9.onrender.com";
-
+        // KEEP YOUR RENDER BACKEND URL HERE
+        const BACKEND_WS_URL = "wss://://onrender.com"; 
+        
         let ws = null;
-        let autoInterval = null;
-        let telemetryChart = null;
-        let timestamps = [];
-        let anomalyFlags = [];
+        const activeState = {}; // Stores chart, timers, timestamps, and anomalyFlags per sensor
 
         const SENSOR_CONFIG = {
             heart_rate: {
+                title: "❤️ Heart Rate (ECG)",
                 models: [
                     { id: "threshold", name: "Static Thresholds (>120 or <50 BPM)" },
                     { id: "zscore", name: "Dynamic Z-Score Anomaly Detector" }
                 ],
                 normalPayload: () => ({ bpm: Math.floor(Math.random() * 18) + 65 }),
                 anomalyPayload: () => ({ bpm: 148 }),
-                normalLabel: "Send Normal HR (~75 BPM)",
-                anomalyLabel: "Simulate Tachycardia (148 BPM)",
+                normalLabel: "Normal (~75 BPM)",
+                anomalyLabel: "Spike (148 BPM)",
                 chartDatasets: [
-                    { label: "Heart Rate (BPM)", key: "bpm", borderColor: "#38bdf8", backgroundColor: "rgba(56, 189, 248, 0.2)", yAxisID: "y" }
+                    { label: "Heart Rate (BPM)", key: "bpm", borderColor: "#38bdf8", yAxisID: "y" }
                 ]
             },
             blood_sugar: {
+                title: "🩸 Blood Sugar (CGM)",
                 models: [
                     { id: "threshold", name: "Clinical Bounds (<70 or >180 mg/dL)" },
                     { id: "ema_drift", name: "EMA Rate-of-Change Drift Detector" }
                 ],
                 normalPayload: () => ({ mg_dl: Math.floor(Math.random() * 25) + 90 }),
                 anomalyPayload: () => ({ mg_dl: 54 }),
-                normalLabel: "Send Normal Glucose (~100 mg/dL)",
-                anomalyLabel: "Simulate Hypoglycemia (54 mg/dL)",
+                normalLabel: "Normal (~100 mg/dL)",
+                anomalyLabel: "Hypo (54 mg/dL)",
                 chartDatasets: [
-                    { label: "Glucose (mg/dL)", key: "mg_dl", borderColor: "#a78bfa", backgroundColor: "rgba(167, 139, 250, 0.2)", yAxisID: "y" }
+                    { label: "Glucose (mg/dL)", key: "mg_dl", borderColor: "#a78bfa", yAxisID: "y" }
                 ]
             },
             brain_waves: {
+                title: "🧠 Brain Waves (EEG)",
                 models: [
-                    { id: "cognitive_load", name: "Beta/Alpha Cognitive Load & Fatigue Classifier" },
-                    { id: "isolation_forest", name: "Isolation Forest (3-Band EEG Outlier ML)" }
+                    { id: "cognitive_load", name: "Beta/Alpha Cognitive Load & Fatigue" },
+                    { id: "isolation_forest", name: "Isolation Forest (3-Band Outlier ML)" }
                 ],
-                normalPayload: () => ({
-                    alpha_hz: +(9 + Math.random() * 2).toFixed(1),
-                    beta_hz: +(14 + Math.random() * 3).toFixed(1),
-                    theta_hz: +(4.5 + Math.random() * 1.5).toFixed(1)
+                normalPayload: () => ({ 
+                    alpha_hz: +(9 + Math.random() * 2).toFixed(1), 
+                    beta_hz: +(14 + Math.random() * 3).toFixed(1), 
+                    theta_hz: +(4.5 + Math.random() * 1.5).toFixed(1) 
                 }),
                 anomalyPayload: () => ({ alpha_hz: 6.0, beta_hz: 28.5, theta_hz: 4.0 }),
-                normalLabel: "Send Focused EEG (~a:10, b:15, t:5)",
-                anomalyLabel: "Simulate Cognitive Overload (b:28.5 Hz)",
+                normalLabel: "Focused EEG",
+                anomalyLabel: "Overload (β:28.5 Hz)",
                 chartDatasets: [
-                    { label: "Alpha (Hz)", key: "alpha_hz", borderColor: "#4ade80", backgroundColor: "transparent", yAxisID: "y" },
-                    { label: "Beta (Hz)", key: "beta_hz", borderColor: "#f87171", backgroundColor: "transparent", yAxisID: "y" },
-                    { label: "Theta (Hz)", key: "theta_hz", borderColor: "#facc15", backgroundColor: "transparent", yAxisID: "y" }
+                    { label: "Alpha (Hz)", key: "alpha_hz", borderColor: "#4ade80", yAxisID: "y" },
+                    { label: "Beta (Hz)", key: "beta_hz", borderColor: "#f87171", yAxisID: "y" },
+                    { label: "Theta (Hz)", key: "theta_hz", borderColor: "#facc15", yAxisID: "y" }
                 ]
             },
             spo2_co2: {
+                title: "🫁 Blood Oxygen (SpO2) & Cabin CO2",
                 models: [
-                    { id: "hypoxia_env", name: "Combined Hypoxia & Cabin CO2 Rule Engine" },
-                    { id: "isolation_forest", name: "Isolation Forest (Multivariate O2/CO2 ML)" }
+                    { id: "hypoxia_env", name: "Combined Hypoxia & Cabin CO2 Engine" },
+                    { id: "isolation_forest", name: "Isolation Forest (Multivariate O2/CO2)" }
                 ],
                 normalPayload: () => ({ spo2_pct: Math.floor(Math.random() * 3) + 97, cabin_co2_ppm: Math.floor(Math.random() * 200) + 750 }),
                 anomalyPayload: () => ({ spo2_pct: 88, cabin_co2_ppm: 5400 }),
-                normalLabel: "Send Nominal Cabin (~98% O2, ~850 ppm CO2)",
-                anomalyLabel: "Simulate Scrubber Failure (88% O2, 5400 ppm)",
+                normalLabel: "Nominal (98% / 850ppm)",
+                anomalyLabel: "Scrubber Fail (88% / 5400ppm)",
                 chartDatasets: [
-                    { label: "Blood Oxygen (%)", key: "spo2_pct", borderColor: "#34d399", backgroundColor: "transparent", yAxisID: "y" },
-                    { label: "Cabin CO2 (ppm)", key: "cabin_co2_ppm", borderColor: "#fb923c", backgroundColor: "transparent", yAxisID: "y1" }
+                    { label: "SpO2 (%)", key: "spo2_pct", borderColor: "#34d399", yAxisID: "y" },
+                    { label: "Cabin CO2 (ppm)", key: "cabin_co2_ppm", borderColor: "#fb923c", yAxisID: "y1" }
                 ]
             }
         };
 
-        function initChart(sensor) {
-            const ctx = document.getElementById("telemetryChart").getContext("2d");
-            if (telemetryChart) telemetryChart.destroy();
-            timestamps = [];
-            anomalyFlags = [];
+        function buildDashboardCards() {
+            const grid = document.getElementById("dashboardGrid");
+            grid.innerHTML = "";
 
+            Object.keys(SENSOR_CONFIG).forEach(sensor => {
+                const cfg = SENSOR_CONFIG[sensor];
+                const modelOptions = cfg.models.map(m => `<option value="${m.id}">${m.name}</option>`).join("");
+
+                const card = document.createElement("div");
+                card.className = "card";
+                card.id = `panel_${sensor}`;
+                card.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <h3 style="margin:0;">${cfg.title}</h3>
+                        <button id="autoBtn_${sensor}" onclick="toggleSensorStream('${sensor}')">▶ Start Auto-Stream</button>
+                    </div>
+                    <div style="margin-top:8px;">
+                        <select id="model_${sensor}" style="width:100%;">${modelOptions}</select>
+                    </div>
+                    <div style="margin-top:6px;">
+                        <button onclick="sendSensorSample('${sensor}', false)">${cfg.normalLabel}</button>
+                        <button class="btn-danger" onclick="sendSensorSample('${sensor}', true)">${cfg.anomalyLabel}</button>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="chart_${sensor}"></canvas>
+                    </div>
+                    <div id="status_${sensor}"><small style="color:#94a3b8;">Awaiting telemetry...</small></div>
+                `;
+                grid.appendChild(card);
+                initSensorChart(sensor);
+            });
+        }
+        function initSensorChart(sensor) {
+            const ctx = document.getElementById(`chart_${sensor}`).getContext("2d");
             const cfg = SENSOR_CONFIG[sensor];
+
+            activeState[sensor] = {
+                timer: null,
+                timestamps: [],
+                anomalyFlags: [],
+                chart: null
+            };
+
             const datasets = cfg.chartDatasets.map(ds => ({
                 label: ds.label,
                 data: [],
                 borderColor: ds.borderColor,
-                backgroundColor: ds.backgroundColor,
+                backgroundColor: "transparent",
                 yAxisID: ds.yAxisID,
                 borderWidth: 2,
                 tension: 0.3,
-                pointBackgroundColor: (context) => anomalyFlags[context.dataIndex] ? "#ef4444" : ds.borderColor,
-                pointBorderColor: (context) => anomalyFlags[context.dataIndex] ? "#ffffff" : ds.borderColor,
-                pointBorderWidth: (context) => anomalyFlags[context.dataIndex] ? 2 : 1,
-                pointRadius: (context) => anomalyFlags[context.dataIndex] ? 7 : 4
+                pointBackgroundColor: (context) => activeState[sensor].anomalyFlags[context.dataIndex] ? "#ef4444" : ds.borderColor,
+                pointBorderColor: (context) => activeState[sensor].anomalyFlags[context.dataIndex] ? "#ffffff" : ds.borderColor,
+                pointBorderWidth: (context) => activeState[sensor].anomalyFlags[context.dataIndex] ? 2 : 1,
+                pointRadius: (context) => activeState[sensor].anomalyFlags[context.dataIndex] ? 7 : 4
             }));
 
             const scales = {
@@ -221,7 +178,7 @@
                 scales.y1 = { ticks: { color: "#fb923c" }, grid: { drawOnChartArea: false }, position: "right" };
             }
 
-            telemetryChart = new Chart(ctx, {
+            activeState[sensor].chart = new Chart(ctx, {
                 type: "line",
                 data: { labels: [], datasets: datasets },
                 options: {
@@ -234,115 +191,102 @@
             });
         }
 
-        function updateChart(sensor, metrics, isAnomaly) {
-            if (!telemetryChart) return;
+        function updateSensorChart(sensor, metrics, isAnomaly) {
+            const state = activeState[sensor];
+            if (!state || !state.chart) return;
 
             const now = Date.now();
             const timeLabel = new Date(now).toLocaleTimeString([], { hour12: false, minute: "2-digit", second: "2-digit" });
             const cfg = SENSOR_CONFIG[sensor];
 
-            timestamps.push(now);
-            anomalyFlags.push(isAnomaly);
-            telemetryChart.data.labels.push(timeLabel);
+            state.timestamps.push(now);
+            state.anomalyFlags.push(isAnomaly);
+            state.chart.data.labels.push(timeLabel);
 
             cfg.chartDatasets.forEach((ds, index) => {
-                telemetryChart.data.datasets[index].data.push(metrics[ds.key]);
+                state.chart.data.datasets[index].data.push(metrics[ds.key]);
             });
 
-            while (timestamps.length > 0 && (now - timestamps.at(0)) > 10000) {
-                timestamps.shift();
-                anomalyFlags.shift();
-                telemetryChart.data.labels.shift();
-                telemetryChart.data.datasets.forEach(dataset => dataset.data.shift());
+            while (state.timestamps.length > 0 && (now - state.timestamps.at(0)) > 10000) {
+                state.timestamps.shift();
+                state.anomalyFlags.shift();
+                state.chart.data.labels.shift();
+                state.chart.data.datasets.forEach(dataset => dataset.data.shift());
             }
 
-            telemetryChart.update();
-        }
-
-
-        function updateModelOptions() {
-            const sensor = document.getElementById("sensorSelect").value;
-            const modelSelect = document.getElementById("modelSelect");
-            modelSelect.innerHTML = "";
-            SENSOR_CONFIG[sensor].models.forEach(m => {
-                const opt = document.createElement("option");
-                opt.value = m.id;
-                opt.innerText = m.name;
-                modelSelect.appendChild(opt);
-            });
+            state.chart.update();
         }
 
         function startSession() {
             const sessionId = "astro_" + Math.random().toString(36).substring(2, 8);
-            const sensor = document.getElementById("sensorSelect").value;
-            const model = document.getElementById("modelSelect").value;
-
-            document.getElementById("statusBox").innerHTML = "<p>Connecting to spacecraft telemetry server...</p>";
-            ws = new WebSocket(`${BACKEND_WS_URL}/ws/${sessionId}/${sensor}/${model}`);
+            document.getElementById("sessionStatus").innerText = "Connecting...";
+            
+            ws = new WebSocket(`${BACKEND_WS_URL}/ws/${sessionId}`);
 
             ws.onopen = () => {
-                document.getElementById("sessionDisplay").innerText = `${sessionId} [${sensor.toUpperCase()}]`;
-                document.getElementById("controls").style.display = "block";
+                document.getElementById("sessionStatus").innerText = `Connected: ${sessionId} (Shared WebSocket)`;
+                document.getElementById("sessionStatus").style.color = "#4ade80";
                 document.getElementById("startBtn").disabled = true;
-                document.getElementById("sensorSelect").disabled = true;
-                document.getElementById("modelSelect").disabled = true;
                 document.getElementById("stopBtn").disabled = false;
-
-                initChart(sensor);
-                telemetryChart.resize();
-
-                const cfg = SENSOR_CONFIG[sensor];
-                document.getElementById("simButtons").innerHTML = `
-                    <button onclick="sendNormal()">${cfg.normalLabel}</button>
-                    <button class="btn-danger" onclick="sendAnomaly()">${cfg.anomalyLabel}</button>
-                `;
-                document.getElementById("statusBox").innerHTML = "<p>Connected. Ready to stream telemetry.</p>";
+                document.getElementById("sensorBar").style.display = "block";
+                document.getElementById("dashboardGrid").style.display = "grid";
+                buildDashboardCards();
             };
 
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
+                const sensor = data.sensor_type;
                 const cssClass = data.is_anomaly ? "alert" : "normal";
-                document.getElementById("statusBox").innerHTML = 
-                    `<div class="${cssClass}">${data.alert_message}<br><small>Raw Data: ${JSON.stringify(data.metrics)}</small></div>`;
-                
-                updateChart(data.sensor_type, data.metrics, data.is_anomaly);
-            };
 
+                document.getElementById(`status_${sensor}`).innerHTML = 
+                    `<div class="${cssClass}">${data.alert_message}</div>`;
+                
+                updateSensorChart(sensor, data.metrics, data.is_anomaly);
+            };
 
             ws.onclose = () => resetUI();
         }
 
+        function sendSensorSample(sensor, forceAnomaly) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            const cfg = SENSOR_CONFIG[sensor];
+            const model = document.getElementById(`model_${sensor}`).value;
+            const metrics = forceAnomaly ? cfg.anomalyPayload() : cfg.normalPayload();
 
-        function sendNormal() {
-            const sensor = document.getElementById("sensorSelect").value;
-            sendPayload(SENSOR_CONFIG[sensor].normalPayload());
+            ws.send(JSON.stringify({
+                sensor_type: sensor,
+                model_type: model,
+                metrics: metrics
+            }));
         }
 
-        function sendAnomaly() {
-            const sensor = document.getElementById("sensorSelect").value;
-            sendPayload(SENSOR_CONFIG[sensor].anomalyPayload());
-        }
+        function toggleSensorStream(sensor) {
+            const state = activeState[sensor];
+            const btn = document.getElementById(`autoBtn_${sensor}`);
 
-        function sendPayload(obj) {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify(obj));
+            if (state.timer) {
+                clearInterval(state.timer);
+                state.timer = null;
+                btn.innerText = "▶ Start Auto-Stream";
+                btn.classList.remove("btn-active");
+            } else {
+                btn.innerText = "⏸ Stop Auto-Stream";
+                btn.classList.add("btn-active");
+                state.timer = setInterval(() => {
+                    const isAnomaly = Math.random() < 0.2;
+                    sendSensorSample(sensor, isAnomaly);
+                }, 1000);
             }
         }
 
-        function toggleAutoStream() {
-            const sensor = document.getElementById("sensorSelect").value;
-            const cfg = SENSOR_CONFIG[sensor];
-
-            if (autoInterval) {
-                clearInterval(autoInterval);
-                autoInterval = null;
-                document.getElementById("autoBtn").innerText = "Start Auto-Stream (1s)";
-            } else {
-                document.getElementById("autoBtn").innerText = "Stop Auto-Stream";
-                autoInterval = setInterval(() => {
-                    const payload = Math.random() > 0.2 ? cfg.normalPayload() : cfg.anomalyPayload();
-                    sendPayload(payload);
-                }, 1000);
+        function toggleSensorPanel(sensor, isVisible) {
+            const panel = document.getElementById(`panel_${sensor}`);
+            if (!panel) return;
+            panel.style.display = isVisible ? "block" : "none";
+            if (!isVisible && activeState[sensor]?.timer) {
+                toggleSensorStream(sensor); // Automatically pause stream if hidden
+            } else if (isVisible && activeState[sensor]?.chart) {
+                activeState[sensor].chart.resize();
             }
         }
 
@@ -351,22 +295,17 @@
         }
 
         function resetUI() {
-            clearInterval(autoInterval);
-            autoInterval = null;
-            if (telemetryChart) {
-                telemetryChart.destroy();
-                telemetryChart = null;
-            }
-            document.getElementById("controls").style.display = "none";
+            Object.keys(activeState).forEach(sensor => {
+                if (activeState[sensor].timer) clearInterval(activeState[sensor].timer);
+                if (activeState[sensor].chart) activeState[sensor].chart.destroy();
+            });
+            document.getElementById("dashboardGrid").style.display = "none";
+            document.getElementById("sensorBar").style.display = "none";
             document.getElementById("startBtn").disabled = false;
-            document.getElementById("sensorSelect").disabled = false;
-            document.getElementById("modelSelect").disabled = false;
             document.getElementById("stopBtn").disabled = true;
-            document.getElementById("statusBox").innerHTML = "<p>Session ended. Telemetry wiped from database.</p>";
+            document.getElementById("sessionStatus").innerText = "Disconnected (Database Wiped)";
+            document.getElementById("sessionStatus").style.color = "#94a3b8";
         }
-
-        updateModelOptions();
     </script>
 </body>
-
 </html>
