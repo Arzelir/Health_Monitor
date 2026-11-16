@@ -1,26 +1,94 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <title>Astronaut Telemetry & AI Health Monitor</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1"></script>
     <style>
-        body { font-family: system-ui, sans-serif; max-width: 760px; margin: 40px auto; padding: 20px; background: #0f172a; color: #f8fafc; }
-        .card { background: #1e293b; border: 1px solid #334155; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
-        .alert { background: #7f1d1d; border: 1px solid #ef4444; color: #fecaca; padding: 14px; border-radius: 6px; font-weight: bold; }
-        .normal { background: #14532d; border: 1px solid #22c55e; color: #bbf7d0; padding: 14px; border-radius: 6px; }
-        select, button { padding: 10px 14px; border-radius: 6px; border: 1px solid #475569; background: #334155; color: white; cursor: pointer; margin-right: 8px; margin-top: 8px; }
-        button:hover:not(:disabled) { background: #475569; }
-        button:disabled { opacity: 0.4; cursor: not-allowed; }
-        .btn-primary { background: #2563eb; border-color: #3b82f6; }
-        .btn-danger { background: #dc2626; border-color: #ef4444; }
-        label { display: inline-block; width: 140px; font-weight: 600; }
-        .chart-container { position: relative; height: 280px; width: 100%; margin-top: 15px; }
+        body {
+            font-family: system-ui, sans-serif;
+            max-width: 760px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #0f172a;
+            color: #f8fafc;
+        }
+
+        .card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .alert {
+            background: #7f1d1d;
+            border: 1px solid #ef4444;
+            color: #fecaca;
+            padding: 14px;
+            border-radius: 6px;
+            font-weight: bold;
+        }
+
+        .normal {
+            background: #14532d;
+            border: 1px solid #22c55e;
+            color: #bbf7d0;
+            padding: 14px;
+            border-radius: 6px;
+        }
+
+        select,
+        button {
+            padding: 10px 14px;
+            border-radius: 6px;
+            border: 1px solid #475569;
+            background: #334155;
+            color: white;
+            cursor: pointer;
+            margin-right: 8px;
+            margin-top: 8px;
+        }
+
+        button:hover:not(:disabled) {
+            background: #475569;
+        }
+
+        button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: #2563eb;
+            border-color: #3b82f6;
+        }
+
+        .btn-danger {
+            background: #dc2626;
+            border-color: #ef4444;
+        }
+
+        label {
+            display: inline-block;
+            width: 140px;
+            font-weight: 600;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 280px;
+            width: 100%;
+            margin-top: 15px;
+        }
     </style>
 </head>
+
 <body>
     <h2>🛰️ Astronaut Biometric Telemetry Console</h2>
-    
+
     <div class="card">
         <div>
             <label>Select Sensor:</label>
@@ -46,7 +114,7 @@
         <div id="simButtons"></div>
         <hr style="border-color: #334155; margin: 15px 0;">
         <button onclick="toggleAutoStream()" id="autoBtn">Start Auto-Stream (1s)</button>
-        
+
         <div class="chart-container">
             <canvas id="telemetryChart"></canvas>
         </div>
@@ -54,12 +122,13 @@
 
     <div id="statusBox"></div>
     <script>
-        const BACKEND_WS_URL = "wss://health-monitor-api-fso9.onrender.com"; 
-        
+        const BACKEND_WS_URL = "wss://health-monitor-api-fso9.onrender.com";
+
         let ws = null;
         let autoInterval = null;
         let telemetryChart = null;
         let timestamps = [];
+        let anomalyFlags = [];
 
         const SENSOR_CONFIG = {
             heart_rate: {
@@ -93,10 +162,10 @@
                     { id: "cognitive_load", name: "Beta/Alpha Cognitive Load & Fatigue Classifier" },
                     { id: "isolation_forest", name: "Isolation Forest (3-Band EEG Outlier ML)" }
                 ],
-                normalPayload: () => ({ 
-                    alpha_hz: +(9 + Math.random() * 2).toFixed(1), 
-                    beta_hz: +(14 + Math.random() * 3).toFixed(1), 
-                    theta_hz: +(4.5 + Math.random() * 1.5).toFixed(1) 
+                normalPayload: () => ({
+                    alpha_hz: +(9 + Math.random() * 2).toFixed(1),
+                    beta_hz: +(14 + Math.random() * 3).toFixed(1),
+                    theta_hz: +(4.5 + Math.random() * 1.5).toFixed(1)
                 }),
                 anomalyPayload: () => ({ alpha_hz: 6.0, beta_hz: 28.5, theta_hz: 4.0 }),
                 normalLabel: "Send Focused EEG (~a:10, b:15, t:5)",
@@ -127,6 +196,7 @@
             const ctx = document.getElementById("telemetryChart").getContext("2d");
             if (telemetryChart) telemetryChart.destroy();
             timestamps = [];
+            anomalyFlags = [];
 
             const cfg = SENSOR_CONFIG[sensor];
             const datasets = cfg.chartDatasets.map(ds => ({
@@ -137,7 +207,10 @@
                 yAxisID: ds.yAxisID,
                 borderWidth: 2,
                 tension: 0.3,
-                pointRadius: 4
+                pointBackgroundColor: (context) => anomalyFlags[context.dataIndex] ? "#ef4444" : ds.borderColor,
+                pointBorderColor: (context) => anomalyFlags[context.dataIndex] ? "#ffffff" : ds.borderColor,
+                pointBorderWidth: (context) => anomalyFlags[context.dataIndex] ? 2 : 1,
+                pointRadius: (context) => anomalyFlags[context.dataIndex] ? 7 : 4
             }));
 
             const scales = {
@@ -161,7 +234,7 @@
             });
         }
 
-        function updateChart(sensor, metrics) {
+        function updateChart(sensor, metrics, isAnomaly) {
             if (!telemetryChart) return;
 
             const now = Date.now();
@@ -169,19 +242,23 @@
             const cfg = SENSOR_CONFIG[sensor];
 
             timestamps.push(now);
+            anomalyFlags.push(isAnomaly);
             telemetryChart.data.labels.push(timeLabel);
+
             cfg.chartDatasets.forEach((ds, index) => {
                 telemetryChart.data.datasets[index].data.push(metrics[ds.key]);
             });
 
             while (timestamps.length > 0 && (now - timestamps.at(0)) > 10000) {
                 timestamps.shift();
+                anomalyFlags.shift();
                 telemetryChart.data.labels.shift();
                 telemetryChart.data.datasets.forEach(dataset => dataset.data.shift());
             }
 
             telemetryChart.update();
         }
+
 
         function updateModelOptions() {
             const sensor = document.getElementById("sensorSelect").value;
@@ -199,10 +276,10 @@
             const sessionId = "astro_" + Math.random().toString(36).substring(2, 8);
             const sensor = document.getElementById("sensorSelect").value;
             const model = document.getElementById("modelSelect").value;
-            
+
             document.getElementById("statusBox").innerHTML = "<p>Connecting to spacecraft telemetry server...</p>";
             ws = new WebSocket(`${BACKEND_WS_URL}/ws/${sessionId}/${sensor}/${model}`);
-            
+
             ws.onopen = () => {
                 document.getElementById("sessionDisplay").innerText = `${sessionId} [${sensor.toUpperCase()}]`;
                 document.getElementById("controls").style.display = "block";
@@ -228,8 +305,9 @@
                 document.getElementById("statusBox").innerHTML = 
                     `<div class="${cssClass}">${data.alert_message}<br><small>Raw Data: ${JSON.stringify(data.metrics)}</small></div>`;
                 
-                updateChart(data.sensor_type, data.metrics);
+                updateChart(data.sensor_type, data.metrics, data.is_anomaly);
             };
+
 
             ws.onclose = () => resetUI();
         }
@@ -290,4 +368,5 @@
         updateModelOptions();
     </script>
 </body>
+
 </html>
