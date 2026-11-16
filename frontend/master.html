@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Master Mission Control — All Connections</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 30px auto; padding: 20px; background: #090d16; color: #f8fafc; }
+        .header { display: flex; justify-content: space-between; align-items: center; background: #1e293b; padding: 18px 24px; border-radius: 10px; border: 1px solid #334155; margin-bottom: 24px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; }
+        .session-card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 18px; }
+        .session-card.has-alert { border-color: #ef4444; box-shadow: 0 0 12px rgba(239, 68, 68, 0.25); }
+        .badge-live { background: #15803d; color: #bbf7d0; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: bold; }
+        .sensor-row { background: #0f172a; padding: 10px; border-radius: 6px; margin-top: 10px; border-left: 4px solid #22c55e; font-size: 0.9rem; }
+        .sensor-row.anomaly { border-left-color: #ef4444; background: #450a0a; color: #fecaca; }
+        .empty-state { text-align: center; padding: 60px 20px; color: #64748b; border: 2px dashed #334155; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h2 style="margin: 0;">📡 Master Mission Control</h2>
+            <small id="connStatus" style="color: #94a3b8;">Connecting to server...</small>
+        </div>
+        <div style="font-size: 1.1rem; font-weight: bold;">
+            Active Connections: <span id="activeCount" style="color: #38bdf8;">0</span>
+        </div>
+    </div>
+
+    <div id="emptyBox" class="empty-state">
+        No active astronaut connections right now.<br>
+        <small>Open your main telemetry site in another tab and click "Open WebSocket Session" to see it appear here live.</small>
+    </div>
+
+    <div id="sessionsGrid" class="grid"></div>
+
+    <script>
+        // REPLACE WITH YOUR RENDER BACKEND URL
+        const BACKEND_WS_URL = "wss://://onrender.com";
+
+        const sessions = new Set();
+
+        function connectMaster() {
+            const ws = new WebSocket(`${BACKEND_WS_URL}/ws/master`);
+
+            ws.onopen = () => {
+                document.getElementById("connStatus").innerText = "Live Feed Active — Monitoring all server WebSockets";
+                document.getElementById("connStatus").style.color = "#4ade80";
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.event === "init_sessions") {
+                    data.sessions.forEach(id => addSessionCard(id));
+                } 
+                else if (data.event === "session_connected") {
+                    addSessionCard(data.session_id);
+                } 
+                else if (data.event === "session_disconnected") {
+                    removeSessionCard(data.session_id);
+                } 
+                else if (data.event === "telemetry") {
+                    addSessionCard(data.session_id);
+                    updateSessionTelemetry(data);
+                }
+            };
+
+            ws.onclose = () => {
+                document.getElementById("connStatus").innerText = "Disconnected — Reconnecting in 3s...";
+                document.getElementById("connStatus").style.color = "#f87171";
+                setTimeout(connectMaster, 3000);
+            };
+        }
+
+        function addSessionCard(sessionId) {
+            if (sessions.has(sessionId)) return;
+            sessions.add(sessionId);
+            updateCount();
+
+            const grid = document.getElementById("sessionsGrid");
+            const card = document.createElement("div");
+            card.className = "session-card";
+            card.id = `card_${sessionId}`;
+            card.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <strong style="font-size:1.05rem; color:#38bdf8;">${sessionId}</strong>
+                    <span class="badge-live">ONLINE</span>
+                </div>
+                <div id="sensors_${sessionId}" style="margin-top:12px;">
+                    <small style="color:#94a3b8;">Connected. Waiting for sensor stream...</small>
+                </div>
+            `;
+            grid.appendChild(card);
+        }
+
+        function removeSessionCard(sessionId) {
+            sessions.delete(sessionId);
+            updateCount();
+            const card = document.getElementById(`card_${sessionId}`);
+            if (card) card.remove();
+        }
+
+        function updateSessionTelemetry(data) {
+            const container = document.getElementById(`sensors_${data.session_id}`);
+            const card = document.getElementById(`card_${data.session_id}`);
+            if (!container) return;
+
+            // Clear placeholder text on first packet
+            if (container.querySelector("small")) {
+                container.innerHTML = "";
+            }
+
+            let row = document.getElementById(`row_${data.session_id}_${data.sensor_type}`);
+            if (!row) {
+                row = document.createElement("div");
+                row.id = `row_${data.session_id}_${data.sensor_type}`;
+                container.appendChild(row);
+            }
+
+            row.className = data.is_anomaly ? "sensor-row anomaly" : "sensor-row";
+            row.innerHTML = `
+                <strong>${data.sensor_type.toUpperCase()}:</strong> ${data.alert_message}<br>
+                <span style="font-size:0.8rem; opacity:0.85;">${JSON.stringify(data.metrics)}</span>
+            `;
+
+            // Highlight card border if any sensor on this session is currently in an alert state
+            const hasAnyAlert = container.querySelector(".anomaly") !== null;
+            card.classList.toggle("has-alert", hasAnyAlert);
+        }
+
+        function updateCount() {
+            document.getElementById("activeCount").innerText = sessions.size;
+            document.getElementById("emptyBox").style.display = sessions.size === 0 ? "block" : "none";
+        }
+
+        connectMaster();
+    </script>
+</body>
+</html>

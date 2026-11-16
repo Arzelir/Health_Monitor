@@ -18,8 +18,20 @@ app.add_middleware(
 TURSO_URL = os.environ.get("TURSO_DATABASE_URL")
 TURSO_TOKEN = os.environ.get("TURSO_AUTH_TOKEN")
 
+# Track connected master consoles and active astronaut sessions in memory
+master_connections: set[WebSocket] = set()
+active_sessions: set[str] = set()
+
+async def broadcast_to_masters(payload: dict):
+    disconnected = set()
+    for master in master_connections:
+        try:
+            await master.send_json(payload)
+        except Exception:
+            disconnected.add(master)
+    master_connections.difference_update(disconnected)
+
 def analyze_telemetry(sensor_type: str, model_type: str, history: list, metrics: dict) -> tuple[bool, str]:
-    # --- 1. HEART RATE ---
     if sensor_type == "heart_rate":
         hr = metrics["bpm"]
         if model_type == "threshold":
@@ -32,7 +44,6 @@ def analyze_telemetry(sensor_type: str, model_type: str, history: list, metrics:
                 return True, f"Sudden HR Spike/Drop (Z-Score > 2.5 from avg {int(mean)})"
         return False, f"Normal ({hr} BPM)"
 
-    # --- 2. BLOOD SUGAR (CGM) ---
     elif sensor_type == "blood_sugar":
         glucose = metrics["mg_dl"]
         if model_type == "threshold":
@@ -47,12 +58,8 @@ def analyze_telemetry(sensor_type: str, model_type: str, history: list, metrics:
                 return True, f"Rapid Glucose Surge (+{rate_of_change:.1f} mg/dL per tick)"
         return False, f"Stable Glucose ({glucose} mg/dL)"
 
-    # --- 3. BRAIN WAVES (EEG) ---
     elif sensor_type == "brain_waves":
-        alpha = metrics["alpha_hz"]
-        beta = metrics["beta_hz"]
-        theta = metrics["theta_hz"]
-        
+        alpha, beta, theta = metrics["alpha_hz"], metrics["beta_hz"], metrics["theta_hz"]
         if model_type == "cognitive_load":
             ratio = beta / max(alpha, 0.1)
             if ratio > 2.5:
@@ -62,16 +69,12 @@ def analyze_telemetry(sensor_type: str, model_type: str, history: list, metrics:
         elif model_type == "isolation_forest" and len(history) >= 8:
             X = np.array([[h["alpha_hz"], h["beta_hz"], h["theta_hz"]] for h in history])
             clf = IsolationForest(contamination=0.15, random_state=42).fit(X)
-            pred = clf.predict([[alpha, beta, theta]])
-            if pred[0] == -1:
-                return True, f"Abnormal EEG Pattern (Isolation Forest Outlier)"
+            if clf.predict([[alpha, beta, theta]])[0] == -1:
+                return True, "Abnormal EEG Pattern (Isolation Forest Outlier)"
         return False, f"Nominal Brain Activity (α:{alpha} β:{beta} θ:{theta} Hz)"
 
-    # --- 4. BLOOD OXYGEN (SpO2) & CABIN CO2 ---
     elif sensor_type == "spo2_co2":
-        spo2 = metrics["spo2_pct"]
-        co2 = metrics["cabin_co2_ppm"]
-        
+        spo2, co2 = metrics["spo2_pct"], metrics["cabin_co2_ppm"]
         if model_type == "hypoxia_env":
             if spo2 < 92 and co2 > 4000:
                 return True, f"CRITICAL: Cabin Hypercapnia ({co2} ppm) + Hypoxia ({spo2}%)"
@@ -82,25 +85,36 @@ def analyze_telemetry(sensor_type: str, model_type: str, history: list, metrics:
         elif model_type == "isolation_forest" and len(history) >= 8:
             X = np.array([[h["spo2_pct"], h["cabin_co2_ppm"]] for h in history])
             clf = IsolationForest(contamination=0.15, random_state=42).fit(X)
-            pred = clf.predict([[spo2, co2]])
-            if pred[0] == -1:
-                return True, f"Multivariate SpO2/CO2 Anomaly Detected"
+            if clf.predict([[spo2, co2]])[0] == -1:
+                return True, "Multivariate SpO2/CO2 Anomaly Detected"
         return False, f"Nominal O2/CO2 (SpO2: {spo2}%, CO2: {co2} ppm)"
 
     return False, "Normal"
 
+# Master Console WebSocket Endpoint
+@app.websocket("/ws/master")
+async def master_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    master_connections.add(websocket)
+    try:
+        # Immediately send the list of already-connected sessions
+        await websocket.send_json({
+            "event": "init_sessions",
+            "sessions": list(active_sessions)
+        })
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        master_connections.discard(websocket)
+
+# Astronaut Client WebSocket Endpoint
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
+    active_sessions.add(session_id)
+    await broadcast_to_masters({"event": "session_connected", "session_id": session_id})
     
-    # Separate sliding history window for each sensor on this single socket
-    histories = {
-        "heart_rate": [],
-        "blood_sugar": [],
-        "brain_waves": [],
-        "spo2_co2": []
-    }
-    
+    histories = {"heart_rate": [], "blood_sugar": [], "brain_waves": [], "spo2_co2": []}
     http_url = TURSO_URL.replace("libsql://", "https://")
     client = libsql_client.create_client(url=http_url, auth_token=TURSO_TOKEN)
 
@@ -114,29 +128,32 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             metrics = packet["metrics"]
 
             sensor_history = histories.setdefault(sensor_type, [])
-
-            # 1. Run AI Analysis for this specific sensor
             is_anomaly, message = analyze_telemetry(sensor_type, model_type, sensor_history, metrics)
             sensor_history.append(metrics)
             if len(sensor_history) > 25:
                 sensor_history.pop(0)
 
-            # 2. Save to Turso
             await client.execute(
                 "INSERT INTO vitals (session_id, sensor_type, metrics_json, is_anomaly) VALUES (?, ?, ?, ?)",
                 [session_id, sensor_type, json.dumps(metrics), is_anomaly]
             )
 
-            # 3. Send response back to frontend tagged with sensor_type
-            await websocket.send_json({
+            response_data = {
+                "event": "telemetry",
+                "session_id": session_id,
                 "sensor_type": sensor_type,
                 "metrics": metrics,
                 "is_anomaly": is_anomaly,
                 "alert_message": message
-            })
+            }
+            
+            # Send back to astronaut tab AND forward to Master Console
+            await websocket.send_json(response_data)
+            await broadcast_to_masters(response_data)
 
     except WebSocketDisconnect:
+        active_sessions.discard(session_id)
+        await broadcast_to_masters({"event": "session_disconnected", "session_id": session_id})
         await client.execute("DELETE FROM vitals WHERE session_id = ?", [session_id])
-        print(f"Wiped multi-sensor session {session_id}")
     finally:
         await client.close()
